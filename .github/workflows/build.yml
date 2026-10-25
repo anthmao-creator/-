@@ -89,12 +89,11 @@ jobs:
               static final String HAPP = "com.happproxy"; // пакет Happ
               ImageView bgA, bgB;
               boolean front;
-              int idx, n;
+              int idx;
               TextView wx;
               LinearLayout row;
-              TextView wx;
               Handler h = new Handler(Looper.getMainLooper());
-              Runnable tick = new Runnable() { public void run() { nextBg(); if (++n % 60 == 0) loadWeather(); h.postDelayed(this, 30000); } };
+              Runnable tick = new Runnable() { public void run() { nextBg(); h.postDelayed(this, 30000); } };
 
               Runnable wxTick = new Runnable() { public void run() { loadWeather(); h.postDelayed(this, 1800000); } };
 
@@ -169,10 +168,6 @@ jobs:
                   wx.setText("Екатеринбург"); wx.setTextSize(26); wx.setTextColor(Color.WHITE);
                   wx.setPadding(0, dp(12), 0, 0);
                   clk.addView(wx);
-                  wx = new TextView(this);
-                  wx.setText("Екатеринбург  …"); wx.setTextSize(22); wx.setTextColor(Color.WHITE);
-                  wx.setPadding(0, dp(8), 0, 0);
-                  clk.addView(wx);
 
                   LinearLayout pills = new LinearLayout(this);
                   pills.setPadding(0, dp(16), 0, 0);
@@ -200,7 +195,6 @@ jobs:
               @Override protected void onResume() {
                   super.onResume();
                   loadApps();
-                  loadWeather();
                   if (row.getChildCount() > 0) row.getChildAt(0).requestFocus();
                   h.removeCallbacks(tick);
                   h.post(tick);
@@ -273,39 +267,6 @@ jobs:
                   List<ResolveInfo> l = new ArrayList<>(m.values());
                   Collections.sort(l, (a, c) -> a.loadLabel(pm).toString().compareToIgnoreCase(c.loadLabel(pm).toString()));
                   for (ResolveInfo r : l) row.addView(tile(r));
-              }
-
-              // Погода: Open-Meteo (без ключа), Екатеринбург, обновление раз в 30 минут
-              void loadWeather() {
-                  new Thread(() -> {
-                      try {
-                          java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(
-                                  "https://api.open-meteo.com/v1/forecast?latitude=56.84&longitude=60.61&current=temperature_2m,weather_code&timezone=auto").openConnection();
-                          c.setConnectTimeout(8000); c.setReadTimeout(8000);
-                          java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(c.getInputStream()));
-                          StringBuilder sb = new StringBuilder(); String ln;
-                          while ((ln = r.readLine()) != null) sb.append(ln);
-                          r.close();
-                          org.json.JSONObject cur = new org.json.JSONObject(sb.toString()).getJSONObject("current");
-                          long t = Math.round(cur.getDouble("temperature_2m"));
-                          String s = "Екатеринбург  " + (t > 0 ? "+" : "") + t + "°  " + wmo(cur.getInt("weather_code"));
-                          runOnUiThread(() -> wx.setText(s));
-                      } catch (Exception e) { }
-                  }).start();
-              }
-
-              String wmo(int c) {
-                  if (c == 0) return "ясно";
-                  if (c <= 2) return "малооблачно";
-                  if (c == 3) return "пасмурно";
-                  if (c == 45 || c == 48) return "туман";
-                  if (c >= 51 && c <= 57) return "морось";
-                  if (c >= 61 && c <= 67) return "дождь";
-                  if (c >= 71 && c <= 77) return "снег";
-                  if (c >= 80 && c <= 82) return "ливень";
-                  if (c == 85 || c == 86) return "снегопад";
-                  if (c >= 95) return "гроза";
-                  return "";
               }
 
               // Фоны из сети: Bing (картинки дня), запасной источник picsum.photos; офлайн: кэш, затем градиент
