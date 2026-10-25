@@ -266,11 +266,12 @@ jobs:
  
                   LinearLayout col = new LinearLayout(this);
                   col.setOrientation(LinearLayout.VERTICAL);
-                  col.setPadding(dp(64), dp(40), dp(64), dp(24));
+                  col.setPadding(0, dp(40), 0, dp(24));
                   root.addView(col, -1, -1);
  
                   FrameLayout head = new FrameLayout(this);
                   col.addView(head, -1, -2);
+                  head.setPadding(dp(64), 0, dp(64), 0);
                   LinearLayout clk = new LinearLayout(this);
                   clk.setOrientation(LinearLayout.VERTICAL);
                   head.addView(clk, -2, -2);
@@ -304,11 +305,16 @@ jobs:
  
                   TextView lab = new TextView(this);
                   lab.setText("ПРИЛОЖЕНИЯ"); lab.setTextSize(14); lab.setLetterSpacing(0.15f); lab.setTextColor(0xAAFFFFFF);
-                  lab.setPadding(0, dp(40), 0, dp(8));
+                  lab.setPadding(dp(64), dp(40), 0, dp(8));
                   col.addView(lab);
-                  HorizontalScrollView hs = new HorizontalScrollView(this);
+                  HorizontalScrollView hs = new HorizontalScrollView(this) {
+                      @Override protected int computeScrollDeltaToGetChildRectOnScreen(android.graphics.Rect r) {
+                          r.left -= dp(48); r.right += dp(48);
+                          return super.computeScrollDeltaToGetChildRectOnScreen(r);
+                      }
+                  };
                   hs.setHorizontalScrollBarEnabled(false); hs.setClipToPadding(false); hs.setClipChildren(false);
-                  hs.setPadding(0, dp(16), 0, dp(16));
+                  hs.setPadding(dp(64), dp(24), dp(64), dp(24));
                   row = new LinearLayout(this);
                   hs.addView(row);
                   col.addView(hs, -1, -2);
@@ -338,7 +344,7 @@ jobs:
                   g.setCornerRadius(rad); g.setColor(base);
                   v.setBackground(g);
                   v.setOnFocusChangeListener((x, f) -> {
-                      g.setColor(f ? 0xFF3B82F6 : base);
+                      if (base == 0) g.setStroke(f ? dp(3) : 0, 0xFF3B82F6); else g.setColor(f ? 0xFF3B82F6 : base);
                       x.animate().scaleX(f ? 1.1f : 1f).scaleY(f ? 1.1f : 1f).setDuration(150);
                   });
               }
@@ -367,7 +373,6 @@ jobs:
                   ImageView iv = new ImageView(this);
                   iv.setImageDrawable(d);
                   iv.setScaleType(banner ? ImageView.ScaleType.CENTER_CROP : ImageView.ScaleType.FIT_CENTER);
-                  if (!banner) iv.setBackgroundColor(0x33FFFFFF);
                   iv.setClipToOutline(true);
                   iv.setOutlineProvider(new ViewOutlineProvider() {
                       @Override public void getOutline(View vw, Outline o) { o.setRoundRect(0, 0, vw.getWidth(), vw.getHeight(), rad); }
@@ -382,7 +387,7 @@ jobs:
                   tv.setPadding(0, dp(8), 0, 0);
                   c.addView(tv, w, -2);
                   c.setFocusable(true);
-                  focusStyle(c, 0x22FFFFFF, rad + dp(8));
+                  focusStyle(c, 0, rad + dp(8));
                   ComponentName cn = new ComponentName(r.activityInfo.packageName, r.activityInfo.name);
                   String pkg = r.activityInfo.packageName;
                   c.setOnClickListener(v -> {
@@ -424,12 +429,26 @@ jobs:
                   return l;
               }
  
+              View plusTile() {
+                  float sc = size() / 100f;
+                  boolean sq = sp.getBoolean("square", false);
+                  TextView t = new TextView(this);
+                  t.setText("+"); t.setTextColor(0xCCFFFFFF); t.setTextSize(48 * sc); t.setGravity(Gravity.CENTER);
+                  t.setFocusable(true);
+                  t.setOnClickListener(v -> pickApps());
+                  focusStyle(t, 0, dp(radius()) + dp(8));
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams((int) (dp(80) * sc), (int) (dp(sq ? 140 : 126) * sc));
+                  lp.topMargin = dp(10); lp.rightMargin = dp(16);
+                  t.setLayoutParams(lp);
+                  return t;
+              }
+ 
               void loadApps() {
                   row.removeAllViews();
                   Set<String> hid = hidden();
                   for (ResolveInfo r : allApps())
                       if (!hid.contains(r.activityInfo.packageName)) row.addView(tile(r));
-                  row.addView(pill("+ Добавить", v -> pickApps()));
+                  row.addView(plusTile());
               }
  
               void settings() {
