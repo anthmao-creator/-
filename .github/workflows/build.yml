@@ -124,6 +124,16 @@ jobs:
               // Погода: Open-Meteo (без ключа), Екатеринбург
  
  
+              String show(String city, double t, int cc, boolean pct) {
+                  long r = Math.round(t);
+                  return city + "  " + (r > 0 ? "+" : "") + r + "°C  " + cloudText(cc) + (pct ? " " + cc + "%" : "");
+              }
+ 
+              String why(String tag, Exception e) {
+                  String m = String.valueOf(e.getMessage());
+                  return tag + ":" + e.getClass().getSimpleName() + " " + (m.length() > 30 ? m.substring(0, 30) : m) + "  ";
+              }
+ 
               void loadWeather() {
                   lastWx = SystemClock.elapsedRealtime();
                   String city = sp.getString("city", "Екатеринбург");
@@ -136,19 +146,28 @@ jobs:
                           org.json.JSONObject cur = new org.json.JSONObject(new String(get(
                               "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon
                               + "&current=temperature_2m,cloud_cover&timezone=auto"), "UTF-8")).getJSONObject("current");
-                          long t = Math.round(cur.getDouble("temperature_2m"));
-                          int cc = cur.getInt("cloud_cover");
-                          res = city + "  " + (t > 0 ? "+" : "") + t + "°C  " + cloudText(cc) + (pct ? " " + cc + "%" : "");
-                      } catch (Exception e) { err = e.getClass().getSimpleName(); }
+                          res = show(city, cur.getDouble("temperature_2m"), cur.getInt("cloud_cover"), pct);
+                      } catch (Exception e) { err += why("OM", e); }
                       if (res == null) {
                           try {
-                              String[] q = new String(get("https://wttr.in/" + lat + "," + lon + "?m&format=%25t%7C%25C&lang=ru"), "UTF-8").trim().split("\\|");
-                              res = city + "  " + q[0].trim() + "  " + q[1].trim().toLowerCase();
-                          } catch (Exception e) { err = err + "/" + e.getClass().getSimpleName(); }
+                              org.json.JSONObject dt = new org.json.JSONObject(new String(get(
+                                  "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=" + lat + "&lon=" + lon), "UTF-8"))
+                                  .getJSONObject("properties").getJSONArray("timeseries").getJSONObject(0)
+                                  .getJSONObject("data").getJSONObject("instant").getJSONObject("details");
+                              res = show(city, dt.getDouble("air_temperature"), (int) Math.round(dt.getDouble("cloud_area_fraction")), pct);
+                          } catch (Exception e) { err += why("MET", e); }
+                      }
+                      if (res == null) {
+                          try {
+                              org.json.JSONObject cc = new org.json.JSONObject(new String(get(
+                                  "https://wttr.in/" + lat + "," + lon + "?format=j1"), "UTF-8"))
+                                  .getJSONArray("current_condition").getJSONObject(0);
+                              res = show(city, Double.parseDouble(cc.getString("temp_C")), Integer.parseInt(cc.getString("cloudcover")), pct);
+                          } catch (Exception e) { err += why("WT", e); }
                       }
                       if (res != null) sp.edit().putString("wx", res).apply();
                       wxDelay = res != null ? every : 60000;
-                      final String out = res != null ? res : city + "  нет связи (" + err + ")";
+                      final String out = res != null ? res : city + "  нет связи: " + err;
                       runOnUiThread(() -> {
                           wx.setText(out);
                           if (vis) { h.removeCallbacks(wxTick); h.postDelayed(wxTick, wxDelay); }
@@ -481,7 +500,7 @@ jobs:
  
               byte[] get(String u) throws Exception {
                   java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL(u).openConnection();
-                  c.setRequestProperty("User-Agent", "Mozilla/5.0 (Android TV)"); c.setConnectTimeout(10000); c.setReadTimeout(15000); c.setInstanceFollowRedirects(true);
+                  c.setRequestProperty("User-Agent", u.contains("met.no") ? "TVHomeLauncher/1.0 personal-android-tv-launcher" : "Mozilla/5.0 (Android TV)"); c.setConnectTimeout(10000); c.setReadTimeout(15000); c.setInstanceFollowRedirects(true);
                   java.io.InputStream in = c.getInputStream();
                   java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
                   byte[] b = new byte[16384]; int n;
