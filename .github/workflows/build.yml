@@ -73,6 +73,11 @@ jobs:
           package com.tvhome.launcher;
  
           import android.app.Activity;
+          import android.graphics.Canvas;
+          import android.graphics.Paint;
+          import android.util.TypedValue;
+          import android.view.KeyEvent;
+          import android.view.animation.LinearInterpolator;
           import android.content.BroadcastReceiver;
           import android.content.Context;
           import android.content.IntentFilter;
@@ -112,6 +117,11 @@ jobs:
               LinearLayout row;
               SharedPreferences sp;
               TextClock clock, dateView;
+              LinearLayout clkBox, btns;
+              HorizontalScrollView hsv;
+              FrameLayout rootV;
+              boolean saver;
+              Runnable saverRun = new Runnable() { public void run() { if (!hasWindowFocus()) resetIdle(); else startSaver(); } };
               boolean dirty = true, busy, vis;
               long lastBg, lastWx;
               BroadcastReceiver pkgRx = new BroadcastReceiver() { public void onReceive(Context c, Intent i) { dirty = true; } };
@@ -188,10 +198,17 @@ jobs:
               void refreshWeather() { lastWx = 0; h.removeCallbacks(wxTick); h.post(wxTick); }
  
               void applyStyle() {
-                  int cs = sp.getInt("clock", 112);
+                  int cs = sp.getInt("clock", 112), m = mg();
                   clock.setTextSize(cs);
                   dateView.setTextSize(Math.max(14f, cs / 4.5f));
                   wx.setTextSize(sp.getInt("wxsize", 26));
+                  FrameLayout.LayoutParams a = (FrameLayout.LayoutParams) clkBox.getLayoutParams();
+                  a.leftMargin = m; a.topMargin = m; clkBox.setLayoutParams(a);
+                  FrameLayout.LayoutParams q = (FrameLayout.LayoutParams) btns.getLayoutParams();
+                  q.rightMargin = Math.max(0, m - dp(10)); q.topMargin = Math.max(0, m - dp(10)); btns.setLayoutParams(q);
+                  FrameLayout.LayoutParams z = (FrameLayout.LayoutParams) hsv.getLayoutParams();
+                  z.bottomMargin = Math.max(0, m - dp(34)); hsv.setLayoutParams(z);
+                  hsv.setPadding(m, dp(24), m, dp(24));
               }
  
               void weatherMenu() {
@@ -259,54 +276,47 @@ jobs:
                   getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                           | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
                   FrameLayout root = new FrameLayout(this);
+                  rootV = root;
                   root.setBackgroundColor(Color.BLACK);
+                  root.setClipChildren(false);
                   bgA = new ImageView(this); bgB = new ImageView(this);
                   bgA.setImageDrawable(gradient()); bgB.setAlpha(0f);
                   for (ImageView v : new ImageView[]{bgA, bgB}) { v.setScaleType(ImageView.ScaleType.CENTER_CROP); v.setColorFilter(0x40000000); root.addView(v, -1, -1); }
  
-                  LinearLayout col = new LinearLayout(this);
-                  col.setOrientation(LinearLayout.VERTICAL);
-                  col.setPadding(0, dp(40), 0, dp(24));
-                  root.addView(col, -1, -1);
- 
-                  FrameLayout head = new FrameLayout(this);
-                  col.addView(head, -1, -2);
-                  head.setPadding(dp(64), 0, dp(64), 0);
                   LinearLayout clk = new LinearLayout(this);
                   clk.setOrientation(LinearLayout.VERTICAL);
-                  head.addView(clk, -2, -2);
+                  clkBox = clk;
                   TextClock t = new TextClock(this);
                   t.setFormat12Hour("HH:mm"); t.setFormat24Hour("HH:mm");
-                  t.setTextSize(112); t.setTextColor(Color.WHITE);
+                  t.setTextColor(Color.WHITE);
                   t.setTypeface(Typeface.create("sans-serif-light", Typeface.NORMAL));
                   clk.addView(t);
                   clock = t;
                   TextClock d = new TextClock(this);
                   d.setFormat12Hour("EEEE, d MMMM"); d.setFormat24Hour("EEEE, d MMMM");
-                  d.setTextSize(24); d.setTextColor(0xCCFFFFFF);
+                  d.setTextColor(0xCCFFFFFF);
                   clk.addView(d);
                   dateView = d;
                   wx = new TextView(this);
-                  wx.setText(sp.getString("wx", "Екатеринбург")); wx.setTextSize(26); wx.setTextColor(Color.WHITE);
+                  wx.setText(sp.getString("wx", "Екатеринбург")); wx.setTextColor(Color.WHITE);
                   wx.setPadding(0, dp(12), 0, 0);
                   clk.addView(wx);
+                  root.addView(clk, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.START));
  
                   LinearLayout pills = new LinearLayout(this);
-                  pills.setPadding(0, dp(16), 0, 0);
-                  FrameLayout.LayoutParams plp = new FrameLayout.LayoutParams(-2, -2, Gravity.END | Gravity.TOP);
-                  plp.rightMargin = dp(64);
-                  head.addView(pills, plp);
-                  pills.addView(pill("VPN Happ", v -> {
+                  pills.setClipChildren(false); pills.setClipToPadding(false);
+                  pills.setPadding(dp(10), dp(10), dp(10), dp(10));
+                  btns = pills;
+                  TextView vv = new TextView(this);
+                  vv.setText("V"); vv.setTextColor(Color.WHITE); vv.setTextSize(20); vv.setTypeface(Typeface.DEFAULT_BOLD); vv.setGravity(Gravity.CENTER);
+                  pills.addView(roundBtn(vv, v -> {
                       Intent i = getPackageManager().getLaunchIntentForPackage(HAPP);
                       if (i != null) startActivity(i);
                       else Toast.makeText(this, "Happ не установлен", Toast.LENGTH_LONG).show();
                   }));
-                  pills.addView(pill("Настройки", v -> settings()));
+                  pills.addView(roundBtn(new Gear(this), v -> settings()));
+                  root.addView(pills, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END));
  
-                  TextView lab = new TextView(this);
-                  lab.setText("ПРИЛОЖЕНИЯ"); lab.setTextSize(14); lab.setLetterSpacing(0.15f); lab.setTextColor(0xAAFFFFFF);
-                  lab.setPadding(dp(64), dp(40), 0, dp(8));
-                  col.addView(lab);
                   HorizontalScrollView hs = new HorizontalScrollView(this) {
                       @Override protected int computeScrollDeltaToGetChildRectOnScreen(android.graphics.Rect r) {
                           r.left -= dp(48); r.right += dp(48);
@@ -314,10 +324,11 @@ jobs:
                       }
                   };
                   hs.setHorizontalScrollBarEnabled(false); hs.setClipToPadding(false); hs.setClipChildren(false);
-                  hs.setPadding(dp(64), dp(24), dp(64), dp(24));
+                  hsv = hs;
                   row = new LinearLayout(this);
+                  row.setClipChildren(false); row.setClipToPadding(false);
                   hs.addView(row);
-                  col.addView(hs, -1, -2);
+                  root.addView(hs, new FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM));
                   applyStyle();
                   setContentView(root);
               }
@@ -325,6 +336,8 @@ jobs:
               @Override protected void onResume() {
                   super.onResume();
                   vis = true;
+                  if (saver) wake();
+                  resetIdle();
                   if (dirty) { loadApps(); focusFirst(); dirty = false; }
                   long now = SystemClock.elapsedRealtime();
                   h.removeCallbacks(tick);
@@ -333,32 +346,90 @@ jobs:
                   h.postDelayed(wxTick, lastWx == 0 ? 0 : Math.max(0, lastWx + wxDelay - now));
               }
  
-              @Override protected void onPause() { super.onPause(); vis = false; h.removeCallbacks(tick); h.removeCallbacks(wxTick); }
+              @Override protected void onPause() { super.onPause(); vis = false; h.removeCallbacks(tick); h.removeCallbacks(wxTick); h.removeCallbacks(saverRun); }
  
               @Override protected void onDestroy() { super.onDestroy(); unregisterReceiver(pkgRx); }
  
               @Override public void onBackPressed() { }
  
-              void focusStyle(View v, int base, int rad) {
-                  GradientDrawable g = new GradientDrawable();
-                  g.setCornerRadius(rad); g.setColor(base);
-                  v.setBackground(g);
-                  v.setOnFocusChangeListener((x, f) -> {
-                      if (base == 0) g.setStroke(f ? dp(3) : 0, 0xFF3B82F6); else g.setColor(f ? 0xFF3B82F6 : base);
-                      x.animate().scaleX(f ? 1.1f : 1f).scaleY(f ? 1.1f : 1f).setDuration(150);
-                  });
+              void zoom(View v) {
+                  v.setOnFocusChangeListener((x, f) -> x.animate().scaleX(f ? 1.12f : 1f).scaleY(f ? 1.12f : 1f).setDuration(150));
               }
  
-              TextView pill(String s, View.OnClickListener c) {
-                  TextView t = new TextView(this);
-                  t.setText(s); t.setTextSize(15); t.setTextColor(Color.WHITE);
-                  t.setPadding(dp(18), dp(8), dp(18), dp(8));
-                  t.setFocusable(true); t.setOnClickListener(c);
-                  focusStyle(t, 0x44FFFFFF, dp(14));
-                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-                  lp.leftMargin = dp(10); t.setLayoutParams(lp);
-                  return t;
+              FrameLayout roundBtn(View icon, View.OnClickListener c) {
+                  FrameLayout f = new FrameLayout(this);
+                  GradientDrawable g = new GradientDrawable();
+                  g.setShape(GradientDrawable.OVAL); g.setColor(0x44FFFFFF);
+                  f.setBackground(g);
+                  f.addView(icon, new FrameLayout.LayoutParams(-1, -1, Gravity.CENTER));
+                  f.setFocusable(true); f.setOnClickListener(c);
+                  f.setOnFocusChangeListener((x, on) -> {
+                      g.setColor(on ? 0xFF3B82F6 : 0x44FFFFFF);
+                      x.animate().scaleX(on ? 1.15f : 1f).scaleY(on ? 1.15f : 1f).setDuration(150);
+                  });
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(dp(44), dp(44));
+                  lp.leftMargin = dp(12);
+                  f.setLayoutParams(lp);
+                  return f;
               }
+ 
+              int mg() { return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_MM, sp.getInt("margin", 20), getResources().getDisplayMetrics()); }
+ 
+              void resetIdle() {
+                  h.removeCallbacks(saverRun);
+                  int m = sp.getInt("idle", 5);
+                  if (m > 0 && vis && !saver) h.postDelayed(saverRun, m * 60000L);
+              }
+ 
+              void startSaver() {
+                  saver = true;
+                  hsv.setVisibility(View.GONE); btns.setVisibility(View.GONE);
+                  clkBox.setTranslationX(0);
+                  drift(true);
+              }
+ 
+              void wake() {
+                  saver = false;
+                  clkBox.animate().cancel(); clkBox.setTranslationX(0);
+                  hsv.setVisibility(View.VISIBLE); btns.setVisibility(View.VISIBLE);
+                  focusFirst();
+                  resetIdle();
+              }
+ 
+              void drift(boolean toRight) {
+                  if (!saver) return;
+                  float dist = Math.max(0, rootV.getWidth() - clkBox.getWidth() - 2 * mg());
+                  clkBox.animate().translationX(toRight ? dist : 0).setDuration(45000).setInterpolator(new LinearInterpolator())
+                      .withEndAction(() -> drift(!toRight));
+              }
+ 
+              @Override public boolean dispatchKeyEvent(KeyEvent e) {
+                  if (saver) {
+                      if (e.getAction() == KeyEvent.ACTION_DOWN) wake();
+                      return true;
+                  }
+                  return super.dispatchKeyEvent(e);
+              }
+ 
+              @Override public void onUserInteraction() { if (!saver) resetIdle(); }
+ 
+              static class Gear extends View {
+                  final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  Gear(Context c) { super(c); p.setColor(Color.WHITE); }
+                  @Override protected void onDraw(Canvas cv) {
+                      float cx = getWidth() / 2f, cy = getHeight() / 2f, r = getWidth() * 0.27f;
+                      p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(r * 0.55f);
+                      cv.drawCircle(cx, cy, r * 0.85f, p);
+                      p.setStyle(Paint.Style.FILL);
+                      for (int i = 0; i < 8; i++) {
+                          cv.save(); cv.rotate(i * 45f, cx, cy);
+                          cv.drawRoundRect(cx - r * 0.25f, cy - r * 1.5f, cx + r * 0.25f, cy - r * 0.95f, 2f, 2f, p);
+                          cv.restore();
+                      }
+                  }
+              }
+ 
+ 
  
               View tile(ResolveInfo r) {
                   PackageManager pm = getPackageManager();
@@ -387,7 +458,7 @@ jobs:
                   tv.setPadding(0, dp(8), 0, 0);
                   c.addView(tv, w, -2);
                   c.setFocusable(true);
-                  focusStyle(c, 0, rad + dp(8));
+                  zoom(c);
                   ComponentName cn = new ComponentName(r.activityInfo.packageName, r.activityInfo.name);
                   String pkg = r.activityInfo.packageName;
                   c.setOnClickListener(v -> {
@@ -436,7 +507,7 @@ jobs:
                   t.setText("+"); t.setTextColor(0xCCFFFFFF); t.setTextSize(48 * sc); t.setGravity(Gravity.CENTER);
                   t.setFocusable(true);
                   t.setOnClickListener(v -> pickApps());
-                  focusStyle(t, 0, dp(radius()) + dp(8));
+                  zoom(t);
                   LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams((int) (dp(80) * sc), (int) (dp(sq ? 140 : 126) * sc));
                   lp.topMargin = dp(10); lp.rightMargin = dp(16);
                   t.setLayoutParams(lp);
@@ -454,6 +525,7 @@ jobs:
               void settings() {
                   String[] items = {"Приложения на экране", "Значки: размер " + size() + "%", "Значки: скругление " + radius(),
                       "Значки: форма - " + (sp.getBoolean("square", false) ? "квадрат" : "16:9"), "Часы: размер " + sp.getInt("clock", 112),
+                      "Отступ от краёв: " + sp.getInt("margin", 20) + " мм", "Заставка: через " + sp.getInt("idle", 5) + " мин (0 = выкл)",
                       "Фон из сети: " + (sp.getBoolean("bgon", true) ? "вкл" : "выкл"), "Смена фона: раз в " + sp.getInt("bgmin", 10) + " мин",
                       "Погода...", "Системные настройки Android"};
                   new AlertDialog.Builder(this).setTitle("Настройки лаунчера").setItems(items, (dlg, w) -> {
@@ -462,9 +534,11 @@ jobs:
                       else if (w == 2) stepper("Скругление значков", "radius", 0, 40, 2, 18, this::settings);
                       else if (w == 3) { sp.edit().putBoolean("square", !sp.getBoolean("square", false)).apply(); loadApps(); settings(); }
                       else if (w == 4) stepper("Размер часов", "clock", 48, 160, 8, 112, this::settings);
-                      else if (w == 5) { sp.edit().putBoolean("bgon", !sp.getBoolean("bgon", true)).apply(); nextBg(); settings(); }
-                      else if (w == 6) stepper("Смена фона, минут", "bgmin", 5, 60, 5, 10, this::settings);
-                      else if (w == 7) weatherMenu();
+                      else if (w == 5) stepper("Отступ от краёв, мм", "margin", 0, 60, 5, 20, this::settings);
+                      else if (w == 6) stepper("Заставка через, мин (0 = выкл)", "idle", 0, 30, 1, 5, this::settings);
+                      else if (w == 7) { sp.edit().putBoolean("bgon", !sp.getBoolean("bgon", true)).apply(); nextBg(); settings(); }
+                      else if (w == 8) stepper("Смена фона, минут", "bgmin", 5, 60, 5, 10, this::settings);
+                      else if (w == 9) weatherMenu();
                       else startActivity(new Intent(Settings.ACTION_SETTINGS));
                   }).setNegativeButton("Закрыть", null).show();
               }
@@ -506,6 +580,7 @@ jobs:
                   dlg.setTitle(title + ": " + val);
                   loadApps();
                   applyStyle();
+                  resetIdle();
               }
  
               // Фоны из сети: Bing (картинки дня), запасной источник picsum.photos; офлайн: кэш, затем градиент
