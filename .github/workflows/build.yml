@@ -33,6 +33,15 @@ jobs:
               compileSdk 34
               defaultConfig { applicationId 'com.tvhome.launcher'; minSdk 24; targetSdk 33; versionCode 1; versionName '1.0' }
               compileOptions { sourceCompatibility JavaVersion.VERSION_17; targetCompatibility JavaVersion.VERSION_17 }
+              lint { checkReleaseBuilds false; abortOnError false }
+              buildTypes {
+                  release {
+                      minifyEnabled true
+                      shrinkResources true
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt')
+                      signingConfig signingConfigs.debug
+                  }
+              }
           }
           EOF_FILE
           mkdir -p app/src/main
@@ -42,7 +51,7 @@ jobs:
               <uses-feature android:name="android.hardware.touchscreen" android:required="false"/>
               <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
               <uses-permission android:name="android.permission.INTERNET"/>
-              <application android:label="TV Home"
+              <application android:label="TV Home" android:allowBackup="false"
                   android:icon="@android:drawable/sym_def_app_icon"
                   android:banner="@android:drawable/sym_def_app_icon"
                   android:theme="@android:style/Theme.DeviceDefault.NoActionBar">
@@ -64,6 +73,10 @@ jobs:
           package com.tvhome.launcher;
  
           import android.app.Activity;
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.IntentFilter;
+          import android.os.SystemClock;
           import android.app.AlertDialog;
           import android.content.SharedPreferences;
           import android.graphics.Outline;
@@ -99,21 +112,25 @@ jobs:
               LinearLayout row;
               SharedPreferences sp;
               TextClock clock, dateView;
-              long wxDelay = 1800000;
+              boolean dirty = true, busy, vis;
+              long lastBg, lastWx;
+              BroadcastReceiver pkgRx = new BroadcastReceiver() { public void onReceive(Context c, Intent i) { dirty = true; } };
+              long wxDelay = 900000;
               Handler h = new Handler(Looper.getMainLooper());
-              Runnable tick = new Runnable() { public void run() { nextBg(); h.postDelayed(this, 30000); } };
+              Runnable tick = new Runnable() { public void run() { nextBg(); h.postDelayed(this, sp.getInt("bgmin", 10) * 60000L); } };
  
-              Runnable wxTick = new Runnable() { public void run() { loadWeather(); h.postDelayed(this, wxDelay); } };
+              Runnable wxTick = new Runnable() { public void run() { loadWeather(); } };
  
               // Погода: Open-Meteo (без ключа), Екатеринбург
  
  
               void loadWeather() {
+                  lastWx = SystemClock.elapsedRealtime();
                   String city = sp.getString("city", "Екатеринбург");
                   float lat = sp.getFloat("lat", 56.84f), lon = sp.getFloat("lon", 60.61f);
                   boolean pct = sp.getBoolean("pct", true);
                   long every = sp.getInt("wxint", 15) * 60000L;
-                  new Thread(() -> {
+                  Thread th = new Thread(() -> {
                       String res = null, err = "";
                       try {
                           org.json.JSONObject cur = new org.json.JSONObject(new String(get(
@@ -132,8 +149,13 @@ jobs:
                       if (res != null) sp.edit().putString("wx", res).apply();
                       wxDelay = res != null ? every : 60000;
                       final String out = res != null ? res : city + "  нет связи (" + err + ")";
-                      runOnUiThread(() -> wx.setText(out));
-                  }).start();
+                      runOnUiThread(() -> {
+                          wx.setText(out);
+                          if (vis) { h.removeCallbacks(wxTick); h.postDelayed(wxTick, wxDelay); }
+                      });
+                  });
+                  th.setPriority(Thread.MIN_PRIORITY);
+                  th.start();
               }
  
               String cloudText(int c) {
@@ -144,7 +166,7 @@ jobs:
                   return "пасмурно";
               }
  
-              void refreshWeather() { h.removeCallbacks(wxTick); h.post(wxTick); }
+              void refreshWeather() { lastWx = 0; h.removeCallbacks(wxTick); h.post(wxTick); }
  
               void applyStyle() {
                   int cs = sp.getInt("clock", 112);
@@ -211,14 +233,17 @@ jobs:
               @Override protected void onCreate(Bundle b) {
                   super.onCreate(b);
                   sp = getSharedPreferences("cfg", MODE_PRIVATE);
+                  IntentFilter pf = new IntentFilter();
+                  pf.addAction(Intent.ACTION_PACKAGE_ADDED); pf.addAction(Intent.ACTION_PACKAGE_REMOVED); pf.addAction(Intent.ACTION_PACKAGE_REPLACED);
+                  pf.addDataScheme("package");
+                  registerReceiver(pkgRx, pf);
                   getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                           | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
                   FrameLayout root = new FrameLayout(this);
                   root.setBackgroundColor(Color.BLACK);
                   bgA = new ImageView(this); bgB = new ImageView(this);
                   bgA.setImageDrawable(gradient()); bgB.setAlpha(0f);
-                  for (ImageView v : new ImageView[]{bgA, bgB}) { v.setScaleType(ImageView.ScaleType.CENTER_CROP); root.addView(v, -1, -1); }
-                  View shade = new View(this); shade.setBackgroundColor(0x40000000); root.addView(shade, -1, -1);
+                  for (ImageView v : new ImageView[]{bgA, bgB}) { v.setScaleType(ImageView.ScaleType.CENTER_CROP); v.setColorFilter(0x40000000); root.addView(v, -1, -1); }
  
                   LinearLayout col = new LinearLayout(this);
                   col.setOrientation(LinearLayout.VERTICAL);
@@ -274,15 +299,18 @@ jobs:
  
               @Override protected void onResume() {
                   super.onResume();
-                  loadApps();
-                  if (row.getChildCount() > 0) row.getChildAt(0).requestFocus();
+                  vis = true;
+                  if (dirty) { loadApps(); focusFirst(); dirty = false; }
+                  long now = SystemClock.elapsedRealtime();
                   h.removeCallbacks(tick);
-                  h.post(tick);
+                  h.postDelayed(tick, lastBg == 0 ? 0 : Math.max(0, lastBg + sp.getInt("bgmin", 10) * 60000L - now));
                   h.removeCallbacks(wxTick);
-                  h.post(wxTick);
+                  h.postDelayed(wxTick, lastWx == 0 ? 0 : Math.max(0, lastWx + wxDelay - now));
               }
  
-              @Override protected void onPause() { super.onPause(); h.removeCallbacks(tick); h.removeCallbacks(wxTick); }
+              @Override protected void onPause() { super.onPause(); vis = false; h.removeCallbacks(tick); h.removeCallbacks(wxTick); }
+ 
+              @Override protected void onDestroy() { super.onDestroy(); unregisterReceiver(pkgRx); }
  
               @Override public void onBackPressed() { }
  
@@ -370,8 +398,10 @@ jobs:
                           String p = r.activityInfo.packageName;
                           if (!p.equals(getPackageName()) && !m.containsKey(p)) m.put(p, r);
                       }
+                  Map<String, String> lbl = new HashMap<>();
+                  for (ResolveInfo r : m.values()) lbl.put(r.activityInfo.packageName, r.loadLabel(pm).toString().toLowerCase());
                   List<ResolveInfo> l = new ArrayList<>(m.values());
-                  Collections.sort(l, (a, c) -> a.loadLabel(pm).toString().compareToIgnoreCase(c.loadLabel(pm).toString()));
+                  Collections.sort(l, (a, c) -> lbl.get(a.activityInfo.packageName).compareTo(lbl.get(c.activityInfo.packageName)));
                   return l;
               }
  
@@ -386,6 +416,7 @@ jobs:
               void settings() {
                   String[] items = {"Приложения на экране", "Значки: размер " + size() + "%", "Значки: скругление " + radius(),
                       "Значки: форма - " + (sp.getBoolean("square", false) ? "квадрат" : "16:9"), "Часы: размер " + sp.getInt("clock", 112),
+                      "Фон из сети: " + (sp.getBoolean("bgon", true) ? "вкл" : "выкл"), "Смена фона: раз в " + sp.getInt("bgmin", 10) + " мин",
                       "Погода...", "Системные настройки Android"};
                   new AlertDialog.Builder(this).setTitle("Настройки лаунчера").setItems(items, (dlg, w) -> {
                       if (w == 0) pickApps();
@@ -393,7 +424,9 @@ jobs:
                       else if (w == 2) stepper("Скругление значков", "radius", 0, 40, 2, 18, this::settings);
                       else if (w == 3) { sp.edit().putBoolean("square", !sp.getBoolean("square", false)).apply(); loadApps(); settings(); }
                       else if (w == 4) stepper("Размер часов", "clock", 48, 160, 8, 112, this::settings);
-                      else if (w == 5) weatherMenu();
+                      else if (w == 5) { sp.edit().putBoolean("bgon", !sp.getBoolean("bgon", true)).apply(); nextBg(); settings(); }
+                      else if (w == 6) stepper("Смена фона, минут", "bgmin", 5, 60, 5, 10, this::settings);
+                      else if (w == 7) weatherMenu();
                       else startActivity(new Intent(Settings.ACTION_SETTINGS));
                   }).setNegativeButton("Закрыть", null).show();
               }
@@ -453,61 +486,73 @@ jobs:
                   java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
                   byte[] b = new byte[16384]; int n;
                   while ((n = in.read(b)) > 0) o.write(b, 0, n);
-                  in.close();
+                  in.close(); c.disconnect();
                   return o.toByteArray();
               }
  
-              Drawable decode(byte[] d) {
+              Drawable decode(File f) {
                   BitmapFactory.Options o = new BitmapFactory.Options();
-                  o.inPreferredConfig = Bitmap.Config.RGB_565;
-                  Bitmap bm = BitmapFactory.decodeByteArray(d, 0, d.length, o);
+                  o.inJustDecodeBounds = true;
+                  BitmapFactory.decodeFile(f.getPath(), o);
+                  int sw = getResources().getDisplayMetrics().widthPixels, sm = 1;
+                  while (o.outWidth / (sm * 2) >= sw) sm *= 2;
+                  o.inJustDecodeBounds = false; o.inSampleSize = sm; o.inPreferredConfig = Bitmap.Config.RGB_565;
+                  Bitmap bm = BitmapFactory.decodeFile(f.getPath(), o);
                   return bm == null ? null : new BitmapDrawable(getResources(), bm);
               }
  
               void nextBg() {
-                  new Thread(() -> {
+                  if (!sp.getBoolean("bgon", true) || busy) return;
+                  busy = true;
+                  lastBg = SystemClock.elapsedRealtime();
+                  Thread th = new Thread(() -> {
                       Drawable d = null;
                       try {
-                          if (urls.isEmpty()) {
-                              try {
-                                  org.json.JSONArray a = new org.json.JSONObject(new String(
-                                      get("https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-US"), "UTF-8")).getJSONArray("images");
-                                  for (int i = 0; i < a.length(); i++)
-                                      urls.add("https://www.bing.com" + a.getJSONObject(i).getString("urlbase") + "_1920x1080.jpg");
-                              } catch (Exception e) { }
-                              if (urls.isEmpty()) for (int i = 1; i <= 8; i++) urls.add("https://picsum.photos/1920/1080?random=" + i);
+                          int k = net++ % 8;
+                          File f = new File(getCacheDir(), "bg" + k + ".jpg");
+                          if (f.exists() && System.currentTimeMillis() - f.lastModified() > 3 * 86400000L) f.delete();
+                          if (!f.exists()) {
+                              if (urls.isEmpty()) {
+                                  try {
+                                      org.json.JSONArray a = new org.json.JSONObject(new String(
+                                          get("https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=en-US"), "UTF-8")).getJSONArray("images");
+                                      for (int i = 0; i < a.length(); i++)
+                                          urls.add("https://www.bing.com" + a.getJSONObject(i).getString("urlbase") + "_1920x1080.jpg");
+                                  } catch (Exception e) { }
+                                  if (urls.isEmpty()) for (int i = 1; i <= 8; i++) urls.add("https://picsum.photos/1920/1080?random=" + i);
+                              }
+                              byte[] data = get(urls.get(k % urls.size()));
+                              java.io.FileOutputStream o = new java.io.FileOutputStream(f);
+                              o.write(data); o.close();
                           }
-                          int k = net++ % urls.size();
-                          byte[] data = get(urls.get(k));
-                          d = decode(data);
-                          if (d != null) {
-                              java.io.FileOutputStream f = new java.io.FileOutputStream(new File(getCacheDir(), "bg" + k + ".jpg"));
-                              f.write(data); f.close();
-                          }
-                      } catch (Exception e) { }
+                          d = decode(f);
+                          if (d == null) f.delete();
+                      } catch (Throwable e) { }
                       if (d == null) {
-                          File[] f = getCacheDir().listFiles((x, n) -> n.startsWith("bg"));
-                          if (f != null && f.length > 0) {
-                              Bitmap bm = BitmapFactory.decodeFile(f[idx++ % f.length].getPath());
-                              if (bm != null) d = new BitmapDrawable(getResources(), bm);
-                          }
+                          try {
+                              File[] fs = getCacheDir().listFiles((x, n) -> n.startsWith("bg"));
+                              if (fs != null && fs.length > 0) d = decode(fs[net % fs.length]);
+                          } catch (Throwable e) { }
                       }
                       final Drawable dd = d != null ? d : gradient();
                       runOnUiThread(() -> {
                           ImageView in = front ? bgA : bgB, out = front ? bgB : bgA;
                           front = !front;
                           in.setImageDrawable(dd);
-                          in.animate().alpha(1f).setDuration(1500);
-                          out.animate().alpha(0f).setDuration(1500);
+                          in.animate().alpha(1f).setDuration(1000);
+                          out.animate().alpha(0f).setDuration(1000).withEndAction(() -> out.setImageDrawable(null));
+                          busy = false;
                       });
-                  }).start();
+                  });
+                  th.setPriority(Thread.MIN_PRIORITY);
+                  th.start();
               }
           }
           EOF_FILE
       - name: Build APK
         run: |
           set +e
-          gradle assembleDebug --no-daemon --console=plain > build.log 2>&1
+          gradle assembleRelease --no-daemon --console=plain > build.log 2>&1
           code=$?
           if [ $code -ne 0 ]; then
             msg=$(grep -E "error:|What went wrong|FAILURE:|Could not|SDK" -A4 build.log | head -40)
@@ -520,4 +565,4 @@ jobs:
         if: always()
         with: { name: build-log, path: build.log }
       - uses: actions/upload-artifact@v4
-        with: { name: TVHome-apk, path: app/build/outputs/apk/debug/app-debug.apk }
+        with: { name: TVHome-apk, path: app/build/outputs/apk/release/app-release.apk }
