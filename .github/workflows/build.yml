@@ -75,6 +75,7 @@ jobs:
           import android.app.Activity;
           import android.graphics.Canvas;
           import android.graphics.Paint;
+          import android.graphics.Path;
           import android.util.TypedValue;
           import android.view.KeyEvent;
           import android.view.animation.LinearInterpolator;
@@ -207,8 +208,9 @@ jobs:
                   FrameLayout.LayoutParams q = (FrameLayout.LayoutParams) btns.getLayoutParams();
                   q.rightMargin = Math.max(0, m - dp(10)); q.topMargin = Math.max(0, m - dp(10)); btns.setLayoutParams(q);
                   FrameLayout.LayoutParams z = (FrameLayout.LayoutParams) hsv.getLayoutParams();
-                  z.bottomMargin = Math.max(0, m - dp(34)); hsv.setLayoutParams(z);
-                  hsv.setPadding(m, dp(24), m, dp(24));
+                  z.bottomMargin = Math.max(0, m - dp(50)); hsv.setLayoutParams(z);
+                  int sidePad = Math.max(m, dp(40));
+                  hsv.setPadding(sidePad, dp(40), sidePad, dp(40));
               }
  
               void weatherMenu() {
@@ -307,8 +309,7 @@ jobs:
                   pills.setClipChildren(false); pills.setClipToPadding(false);
                   pills.setPadding(dp(10), dp(10), dp(10), dp(10));
                   btns = pills;
-                  TextView vv = new TextView(this);
-                  vv.setText("V"); vv.setTextColor(Color.WHITE); vv.setTextSize(20); vv.setTypeface(Typeface.DEFAULT_BOLD); vv.setGravity(Gravity.CENTER);
+                  View vv = new Vee(this);
                   pills.addView(roundBtn(vv, v -> {
                       Intent i = getPackageManager().getLaunchIntentForPackage(HAPP);
                       if (i != null) startActivity(i);
@@ -319,7 +320,7 @@ jobs:
  
                   HorizontalScrollView hs = new HorizontalScrollView(this) {
                       @Override protected int computeScrollDeltaToGetChildRectOnScreen(android.graphics.Rect r) {
-                          r.left -= dp(48); r.right += dp(48);
+                          r.left -= dp(80); r.right += dp(80);
                           return super.computeScrollDeltaToGetChildRectOnScreen(r);
                       }
                   };
@@ -353,7 +354,10 @@ jobs:
               @Override public void onBackPressed() { }
  
               void zoom(View v) {
-                  v.setOnFocusChangeListener((x, f) -> x.animate().scaleX(f ? 1.12f : 1f).scaleY(f ? 1.12f : 1f).setDuration(150));
+                  v.setOnFocusChangeListener((x, f) -> {
+                      float z = f ? sp.getInt("zoom", 125) / 100f : 1f;
+                      x.animate().scaleX(z).scaleY(z).translationZ(f ? 20f : 0f).setDuration(150);
+                  });
               }
  
               FrameLayout roundBtn(View icon, View.OnClickListener c) {
@@ -372,6 +376,8 @@ jobs:
                   f.setLayoutParams(lp);
                   return f;
               }
+ 
+              int gap() { return dp(Math.max(0, sp.getInt("gap", 36) - 20)); }
  
               int mg() { return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_MM, sp.getInt("margin", 20), getResources().getDisplayMetrics()); }
  
@@ -415,18 +421,53 @@ jobs:
  
               static class Gear extends View {
                   final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
-                  Gear(Context c) { super(c); p.setColor(Color.WHITE); }
-                  @Override protected void onDraw(Canvas cv) {
-                      float cx = getWidth() / 2f, cy = getHeight() / 2f, r = getWidth() * 0.27f;
-                      p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(r * 0.55f);
-                      cv.drawCircle(cx, cy, r * 0.85f, p);
-                      p.setStyle(Paint.Style.FILL);
-                      for (int i = 0; i < 8; i++) {
-                          cv.save(); cv.rotate(i * 45f, cx, cy);
-                          cv.drawRoundRect(cx - r * 0.25f, cy - r * 1.5f, cx + r * 0.25f, cy - r * 0.95f, 2f, 2f, p);
-                          cv.restore();
-                      }
+                  final Path path = new Path();
+                  Gear(Context c) {
+                      super(c);
+                      p.setColor(Color.WHITE); p.setStyle(Paint.Style.FILL_AND_STROKE); p.setStrokeJoin(Paint.Join.ROUND);
                   }
+                  void pt(boolean first, double ang, float r, float cx, float cy) {
+                      float x = cx + (float) (r * Math.cos(ang)), y = cy + (float) (r * Math.sin(ang));
+                      if (first) path.moveTo(x, y); else path.lineTo(x, y);
+                  }
+                  @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
+                      float cx = w / 2f, cy = h / 2f, R = w * 0.30f, rb = R * 0.80f;
+                      int n = 8;
+                      double step = 2 * Math.PI / n;
+                      p.setStrokeWidth(w * 0.04f);
+                      path.reset();
+                      path.setFillType(Path.FillType.EVEN_ODD);
+                      for (int i = 0; i < n; i++) {
+                          double a = i * step - Math.PI / 2;
+                          pt(i == 0, a - step * 0.30, rb, cx, cy);
+                          pt(false, a - step * 0.16, R, cx, cy);
+                          pt(false, a + step * 0.16, R, cx, cy);
+                          pt(false, a + step * 0.30, rb, cx, cy);
+                          pt(false, a + step * 0.50, rb, cx, cy);
+                      }
+                      path.close();
+                      path.addCircle(cx, cy, R * 0.36f, Path.Direction.CCW);
+                  }
+                  @Override protected void onDraw(Canvas cv) { cv.drawPath(path, p); }
+              }
+ 
+              static class Vee extends View {
+                  final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  final Path path = new Path();
+                  Vee(Context c) {
+                      super(c);
+                      p.setColor(Color.WHITE); p.setStyle(Paint.Style.STROKE);
+                      p.setStrokeCap(Paint.Cap.ROUND); p.setStrokeJoin(Paint.Join.ROUND);
+                  }
+                  @Override protected void onSizeChanged(int w, int h, int ow, int oh) {
+                      float cx = w / 2f, cy = h / 2f;
+                      p.setStrokeWidth(w * 0.11f);
+                      path.reset();
+                      path.moveTo(cx - w * 0.19f, cy - w * 0.15f);
+                      path.lineTo(cx, cy + w * 0.17f);
+                      path.lineTo(cx + w * 0.19f, cy - w * 0.15f);
+                  }
+                  @Override protected void onDraw(Canvas cv) { cv.drawPath(path, p); }
               }
  
  
@@ -476,7 +517,7 @@ jobs:
                       return true;
                   });
                   LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-2, -2);
-                  lp.rightMargin = dp(16); c.setLayoutParams(lp);
+                  lp.rightMargin = gap(); c.setLayoutParams(lp);
                   return c;
               }
  
@@ -509,7 +550,7 @@ jobs:
                   t.setOnClickListener(v -> pickApps());
                   zoom(t);
                   LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams((int) (dp(80) * sc), (int) (dp(sq ? 140 : 126) * sc));
-                  lp.topMargin = dp(10); lp.rightMargin = dp(16);
+                  lp.topMargin = dp(10); lp.rightMargin = gap();
                   t.setLayoutParams(lp);
                   return t;
               }
@@ -524,7 +565,9 @@ jobs:
  
               void settings() {
                   String[] items = {"Приложения на экране", "Значки: размер " + size() + "%", "Значки: скругление " + radius(),
-                      "Значки: форма - " + (sp.getBoolean("square", false) ? "квадрат" : "16:9"), "Часы: размер " + sp.getInt("clock", 112),
+                      "Значки: форма - " + (sp.getBoolean("square", false) ? "квадрат" : "16:9"),
+                      "Расстояние между значками: " + sp.getInt("gap", 36), "Увеличение при выделении: " + sp.getInt("zoom", 125) + "%",
+                      "Часы: размер " + sp.getInt("clock", 112),
                       "Отступ от краёв: " + sp.getInt("margin", 20) + " мм", "Заставка: через " + sp.getInt("idle", 5) + " мин (0 = выкл)",
                       "Фон из сети: " + (sp.getBoolean("bgon", true) ? "вкл" : "выкл"), "Смена фона: раз в " + sp.getInt("bgmin", 10) + " мин",
                       "Погода...", "Системные настройки Android"};
@@ -533,12 +576,14 @@ jobs:
                       else if (w == 1) stepper("Размер значков, %", "size", 50, 200, 10, 100, this::settings);
                       else if (w == 2) stepper("Скругление значков", "radius", 0, 40, 2, 18, this::settings);
                       else if (w == 3) { sp.edit().putBoolean("square", !sp.getBoolean("square", false)).apply(); loadApps(); settings(); }
-                      else if (w == 4) stepper("Размер часов", "clock", 48, 160, 8, 112, this::settings);
-                      else if (w == 5) stepper("Отступ от краёв, мм", "margin", 0, 60, 5, 20, this::settings);
-                      else if (w == 6) stepper("Заставка через, мин (0 = выкл)", "idle", 0, 30, 1, 5, this::settings);
-                      else if (w == 7) { sp.edit().putBoolean("bgon", !sp.getBoolean("bgon", true)).apply(); nextBg(); settings(); }
-                      else if (w == 8) stepper("Смена фона, минут", "bgmin", 5, 60, 5, 10, this::settings);
-                      else if (w == 9) weatherMenu();
+                      else if (w == 4) stepper("Расстояние между значками", "gap", 20, 100, 4, 36, this::settings);
+                      else if (w == 5) stepper("Увеличение при выделении, %", "zoom", 105, 160, 5, 125, this::settings);
+                      else if (w == 6) stepper("Размер часов", "clock", 48, 160, 8, 112, this::settings);
+                      else if (w == 7) stepper("Отступ от краёв, мм", "margin", 0, 60, 5, 20, this::settings);
+                      else if (w == 8) stepper("Заставка через, мин (0 = выкл)", "idle", 0, 30, 1, 5, this::settings);
+                      else if (w == 9) { sp.edit().putBoolean("bgon", !sp.getBoolean("bgon", true)).apply(); nextBg(); settings(); }
+                      else if (w == 10) stepper("Смена фона, минут", "bgmin", 5, 60, 5, 10, this::settings);
+                      else if (w == 11) weatherMenu();
                       else startActivity(new Intent(Settings.ACTION_SETTINGS));
                   }).setNegativeButton("Закрыть", null).show();
               }
