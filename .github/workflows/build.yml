@@ -122,6 +122,7 @@ jobs:
               HorizontalScrollView hsv;
               FrameLayout rootV;
               boolean saver;
+              View moveView;
               Runnable saverRun = new Runnable() { public void run() { if (!hasWindowFocus()) resetIdle(); else startSaver(); } };
               boolean dirty = true, busy, vis;
               long lastBg, lastWx;
@@ -315,6 +316,7 @@ jobs:
                       if (i != null) startActivity(i);
                       else Toast.makeText(this, "Happ не установлен", Toast.LENGTH_LONG).show();
                   }));
+                  pills.addView(roundBtn(new Grid(this), v -> appMenu()));
                   pills.addView(roundBtn(new Gear(this), v -> settings()));
                   root.addView(pills, new FrameLayout.LayoutParams(-2, -2, Gravity.TOP | Gravity.END));
  
@@ -347,7 +349,7 @@ jobs:
                   h.postDelayed(wxTick, lastWx == 0 ? 0 : Math.max(0, lastWx + wxDelay - now));
               }
  
-              @Override protected void onPause() { super.onPause(); vis = false; h.removeCallbacks(tick); h.removeCallbacks(wxTick); h.removeCallbacks(saverRun); }
+              @Override protected void onPause() { super.onPause(); vis = false; h.removeCallbacks(tick); h.removeCallbacks(wxTick); h.removeCallbacks(saverRun); endMove(); }
  
               @Override protected void onDestroy() { super.onDestroy(); unregisterReceiver(pkgRx); }
  
@@ -375,6 +377,105 @@ jobs:
                   lp.leftMargin = dp(12);
                   f.setLayoutParams(lp);
                   return f;
+              }
+ 
+              List<String> order() {
+                  String o = sp.getString("order", "");
+                  List<String> l = new ArrayList<>();
+                  if (!o.isEmpty()) l.addAll(Arrays.asList(o.split(",")));
+                  return l;
+              }
+ 
+              void saveOrder() {
+                  List<String> n = new ArrayList<>();
+                  for (int i = 0; i < row.getChildCount(); i++) {
+                      Object t = row.getChildAt(i).getTag();
+                      if (t != null) n.add(t.toString());
+                  }
+                  for (String q : order()) if (!n.contains(q)) n.add(q);
+                  sp.edit().putString("order", TextUtils.join(",", n)).apply();
+              }
+ 
+              void startMove(View c) {
+                  moveView = c; c.setAlpha(0.7f); c.requestFocus();
+                  Toast.makeText(this, "← → двигать, ОК - готово", Toast.LENGTH_LONG).show();
+              }
+ 
+              void moveStep(int dir) {
+                  int i = row.indexOfChild(moveView), j = i + dir;
+                  if (i < 0 || j < 0 || j >= row.getChildCount() - 1) return;
+                  View v = moveView;
+                  row.removeView(v); row.addView(v, j);
+                  saveOrder();
+                  v.requestFocus();
+              }
+ 
+              void endMove() {
+                  if (moveView != null) moveView.setAlpha(1f);
+                  moveView = null;
+              }
+ 
+              void appMenu() {
+                  PackageManager pm = getPackageManager();
+                  Set<String> hid = hidden();
+                  android.app.Dialog dlg = new android.app.Dialog(this, android.R.style.Theme_DeviceDefault_NoActionBar_Fullscreen);
+                  dlg.getWindow().setBackgroundDrawable(new android.graphics.drawable.ColorDrawable(0xF2101018));
+                  int m = Math.max(mg(), dp(24));
+                  LinearLayout box = new LinearLayout(this);
+                  box.setOrientation(LinearLayout.VERTICAL);
+                  box.setPadding(m, m, m, 0);
+                  TextView ttl = new TextView(this);
+                  ttl.setText("Все приложения"); ttl.setTextColor(Color.WHITE); ttl.setTextSize(28);
+                  ttl.setPadding(0, 0, 0, dp(16));
+                  box.addView(ttl);
+                  ScrollView sv = new ScrollView(this);
+                  sv.setClipChildren(false); sv.setClipToPadding(false);
+                  sv.setPadding(dp(16), dp(16), dp(16), dp(24));
+                  GridLayout g = new GridLayout(this);
+                  g.setClipChildren(false);
+                  int cols = Math.max(3, (getResources().getDisplayMetrics().widthPixels - 2 * m - dp(32)) / dp(150));
+                  g.setColumnCount(cols);
+                  View first = null;
+                  for (ResolveInfo r : allApps()) {
+                      String pkg = r.activityInfo.packageName;
+                      LinearLayout c = new LinearLayout(this);
+                      c.setOrientation(LinearLayout.VERTICAL); c.setGravity(Gravity.CENTER_HORIZONTAL);
+                      c.setPadding(dp(8), dp(12), dp(8), dp(12));
+                      ImageView iv = new ImageView(this);
+                      iv.setImageDrawable(r.loadIcon(pm));
+                      c.addView(iv, dp(72), dp(72));
+                      TextView tv = new TextView(this);
+                      tv.setText(r.loadLabel(pm).toString()); tv.setTextColor(Color.WHITE); tv.setTextSize(14);
+                      tv.setSingleLine(true); tv.setEllipsize(TextUtils.TruncateAt.END); tv.setGravity(Gravity.CENTER_HORIZONTAL);
+                      tv.setPadding(0, dp(8), 0, 0);
+                      c.addView(tv, dp(134), -2);
+                      c.setFocusable(true);
+                      zoom(c);
+                      ComponentName cn = new ComponentName(pkg, r.activityInfo.name);
+                      c.setOnClickListener(v -> {
+                          dlg.dismiss();
+                          try { startActivity(new Intent(Intent.ACTION_MAIN).setComponent(cn).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
+                          catch (Exception e) { Toast.makeText(this, "Не удалось открыть", Toast.LENGTH_SHORT).show(); }
+                      });
+                      c.setOnLongClickListener(v -> {
+                          if (hid.contains(pkg)) {
+                              hid.remove(pkg);
+                              sp.edit().putStringSet("hidden", hid).apply();
+                              loadApps();
+                              Toast.makeText(this, "Добавлено на главный экран", Toast.LENGTH_SHORT).show();
+                          } else Toast.makeText(this, "Уже на главном экране", Toast.LENGTH_SHORT).show();
+                          return true;
+                      });
+                      GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+                      lp.width = dp(150); lp.height = -2;
+                      g.addView(c, lp);
+                      if (first == null) first = c;
+                  }
+                  sv.addView(g);
+                  box.addView(sv, -1, -1);
+                  dlg.setContentView(box);
+                  dlg.show();
+                  if (first != null) first.requestFocus();
               }
  
               int gap() { return dp(Math.max(0, sp.getInt("gap", 36) - 20)); }
@@ -414,6 +515,15 @@ jobs:
                       if (e.getAction() == KeyEvent.ACTION_DOWN) wake();
                       return true;
                   }
+                  if (moveView != null) {
+                      if (e.getAction() == KeyEvent.ACTION_DOWN) {
+                          int k = e.getKeyCode();
+                          if (k == KeyEvent.KEYCODE_DPAD_LEFT) moveStep(-1);
+                          else if (k == KeyEvent.KEYCODE_DPAD_RIGHT) moveStep(1);
+                          else if (e.getRepeatCount() == 0) endMove();
+                      }
+                      return true;
+                  }
                   return super.dispatchKeyEvent(e);
               }
  
@@ -449,6 +559,18 @@ jobs:
                       path.addCircle(cx, cy, R * 0.36f, Path.Direction.CCW);
                   }
                   @Override protected void onDraw(Canvas cv) { cv.drawPath(path, p); }
+              }
+ 
+              static class Grid extends View {
+                  final Paint p = new Paint(Paint.ANTI_ALIAS_FLAG);
+                  Grid(Context c) { super(c); p.setColor(Color.WHITE); }
+                  @Override protected void onDraw(Canvas cv) {
+                      float w = getWidth(), sz = w * 0.12f, gp = w * 0.07f, tot = 3 * sz + 2 * gp;
+                      float x0 = (w - tot) / 2f, y0 = (getHeight() - tot) / 2f;
+                      for (int i = 0; i < 3; i++)
+                          for (int j = 0; j < 3; j++)
+                              cv.drawRoundRect(x0 + j * (sz + gp), y0 + i * (sz + gp), x0 + j * (sz + gp) + sz, y0 + i * (sz + gp) + sz, sz * 0.3f, sz * 0.3f, p);
+                  }
               }
  
               static class Vee extends View {
@@ -502,16 +624,20 @@ jobs:
                   zoom(c);
                   ComponentName cn = new ComponentName(r.activityInfo.packageName, r.activityInfo.name);
                   String pkg = r.activityInfo.packageName;
+                  c.setTag(pkg);
                   c.setOnClickListener(v -> {
                       try { startActivity(new Intent(Intent.ACTION_MAIN).setComponent(cn).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); }
                       catch (Exception e) { Toast.makeText(this, "Не удалось открыть", Toast.LENGTH_SHORT).show(); }
                   });
                   c.setOnLongClickListener(v -> {
-                      new AlertDialog.Builder(this).setTitle("Убрать «" + label + "» с экрана?")
-                          .setPositiveButton("Убрать", (dd, ww) -> {
-                              Set<String> hs = hidden(); hs.add(pkg);
-                              sp.edit().putStringSet("hidden", hs).apply();
-                              loadApps(); focusFirst();
+                      new AlertDialog.Builder(this).setTitle(label)
+                          .setItems(new String[]{"Переместить", "Убрать с экрана"}, (dd, w2) -> {
+                              if (w2 == 0) startMove(c);
+                              else {
+                                  Set<String> hs = hidden(); hs.add(pkg);
+                                  sp.edit().putStringSet("hidden", hs).apply();
+                                  loadApps(); focusFirst();
+                              }
                           })
                           .setNegativeButton("Отмена", null).show();
                       return true;
@@ -556,10 +682,18 @@ jobs:
               }
  
               void loadApps() {
+                  moveView = null;
                   row.removeAllViews();
                   Set<String> hid = hidden();
+                  List<ResolveInfo> vis = new ArrayList<>();
                   for (ResolveInfo r : allApps())
-                      if (!hid.contains(r.activityInfo.packageName)) row.addView(tile(r));
+                      if (!hid.contains(r.activityInfo.packageName)) vis.add(r);
+                  List<String> ord = order();
+                  Collections.sort(vis, (a, c) -> {
+                      int x = ord.indexOf(a.activityInfo.packageName), y = ord.indexOf(c.activityInfo.packageName);
+                      return Integer.compare(x < 0 ? 99999 : x, y < 0 ? 99999 : y);
+                  });
+                  for (ResolveInfo r : vis) row.addView(tile(r));
                   row.addView(plusTile());
               }
  
